@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#17324d"><title>Revisiones</title><link rel="stylesheet" href="/styles.css"></head>
+<body><main id="app"></main>
+<script>
+const $=s=>document.querySelector(s),app=$("#app");
+const api=async(a,d)=>{const r=await fetch("/api/"+a,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(d||{})});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||"Error");return j};
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+function say(t,ok){const m=$(".msg");if(m){m.textContent=t;m.className="msg"+(ok?" ok":"")}}
+let ME;
+function loginView(){app.innerHTML=`<div class="hero"><h1>Revisiones</h1><p>Equipos, vencimientos y partes de mantenimiento en un solo sitio.</p></div><form id="f"><label>Usuario<input name="user" autocomplete="username" required></label><label>Contraseña<input name="password" type="password" autocomplete="current-password" required></label><label class="chk"><input type="checkbox" name="remember">Mantener sesión</label><p class="msg"></p><button>Entrar</button> <button type="button" class="sec" id="act">Tengo un código de alta</button> <button type="button" class="sec" id="rst">Restablecer contraseña</button></form>`;
+$("#f").onsubmit=async e=>{e.preventDefault();const d=Object.fromEntries(new FormData(e.target));d.remember=!!d.remember;try{await api("login",d);start()}catch(x){say(x.message)}};$("#act").onclick=activateView;$("#rst").onclick=resetView}
+function activateView(){app.innerHTML=`<div class="hero"><h1>Crear mi acceso</h1></div><form id="f"><label>Código de alta<input name="code" required></label><label>Usuario<input name="user" autocomplete="username" required></label><label>Contraseña (mínimo 8)<input name="password" type="password" autocomplete="new-password" required></label><p class="msg"></p><button>Crear acceso</button> <button type="button" class="sec" id="b">Volver</button></form>`;
+$("#b").onclick=loginView;$("#f").onsubmit=async e=>{e.preventDefault();try{await api("activate",Object.fromEntries(new FormData(e.target)));loginView();say("Acceso creado. Ya puedes entrar.",1)}catch(x){say(x.message)}}}
+function resetView(){app.innerHTML=`<div class="hero"><h1>Restablecer contraseña</h1><p>Pide un código a tu administrador. Caduca en 24 horas.</p></div><form id="f"><label>Código<input name="code" required></label><label>Contraseña nueva (mínimo 8)<input name="password" type="password" autocomplete="new-password" required></label><p class="msg"></p><button>Cambiar contraseña</button> <button type="button" class="sec" id="b">Volver</button></form>`;
+$("#b").onclick=loginView;$("#f").onsubmit=async e=>{e.preventDefault();try{await api("reset-password",Object.fromEntries(new FormData(e.target)));loginView();say("Contraseña cambiada. Ya puedes entrar.",1)}catch(x){say(x.message)}}}
+function panel(me){ME=me;
+app.innerHTML=`<div class="bar in"><span class="brand">Revisiones</span><span>${esc(me.user)} · ${me.role==="admin"?"admin":"técnico"}<button class="out" id="out">Salir</button></span></div><div id="v"></div>`;
+$("#out").onclick=async()=>{await api("logout");loginView()};
+if(me.role!=="admin"){$("#v").innerHTML=`<div class="box">Tu acceso está activo. Aquí verás las visitas que te asignen.</div>`;return}
+$("#v").innerHTML=`<div class="tabs"><button id="t_team">Equipo</button><button id="t_ajustes">Ajustes</button></div><div id="c"></div>`;
+const go=k=>{document.querySelectorAll(".tabs button").forEach(b=>b.className=b.id==="t_"+k?"on":"sec");({team,ajustes})[k]()};
+["team","ajustes"].forEach(k=>$("#t_"+k).onclick=()=>go(k));go("team")}
+async function team(){const t=await api("team-list");
+$("#c").innerHTML=`<div class="box"><button id="inv" class="mt0">Generar código de alta</button><p class="msg"></p><h2>Códigos pendientes</h2>${t.invites.map(i=>`<div class="row"><span><code>${esc(i.code)}</code>${i.reset?" · restablecer "+esc(i.reset):""}</span><button class="sec mt0" data-c="${esc(i.code)}">Anular</button></div>`).join("")||"<p>No hay códigos pendientes.</p>"}<h2>Técnicos</h2>${t.users.map(u=>`<div class="row"><span>${esc(u)}</span><span><button class="sec mt0" data-r="${esc(u)}">Restablecer contraseña</button> <button class="sec mt0" data-u="${esc(u)}">Dar de baja</button></span></div>`).join("")||"<p>Aún no hay técnicos. Genera un código y pásaselo.</p>"}</div>`;
+$("#inv").onclick=async()=>{try{const r=await api("invite-create");await team();say("Código nuevo: "+r.code+" (caduca en 3 días)",1)}catch(x){say(x.message)}};
+document.querySelectorAll("[data-c]").forEach(b=>b.onclick=async()=>{await api("invite-delete",{code:b.dataset.c});team()});
+document.querySelectorAll("[data-r]").forEach(b=>b.onclick=async()=>{try{const r=await api("reset-create",{user:b.dataset.r});await team();say("Código para "+b.dataset.r+": "+r.code+" (caduca en 24 horas)",1)}catch(x){say(x.message)}});
+document.querySelectorAll("[data-u]").forEach(b=>b.onclick=async()=>{if(confirm("¿Dar de baja a "+b.dataset.u+"?")){await api("user-delete",{user:b.dataset.u});team()}})}
+async function ajustes(){const s=await api("settings-get");
+$("#c").innerHTML=`<form id="f"><p class="sub">Define cada tipo de equipo, cada cuánto se revisa y los puntos del checklist del parte. Las periodicidades que vienen por defecto son provisionales: revísalas con alguien del sector.</p><div id="tp"></div><button type="button" class="sec" id="add">Añadir tipo de equipo</button><p class="msg"></p><button>Guardar ajustes</button></form>`;
+const row=(t={})=>{const d=document.createElement("div");d.className="box";d.innerHTML=`<label>Tipo de equipo<input name="n" value="${esc(t.nombre||"")}"></label><label>Se revisa cada (meses)<input name="m" type="number" min="1" max="120" value="${t.meses||12}"></label><label>Checklist del parte (un punto por línea)<textarea name="c">${esc((t.checklist||[]).join("\n"))}</textarea></label><button type="button" class="sec">Quitar este tipo</button>`;d.querySelector("button").onclick=()=>d.remove();$("#tp").append(d)};
+s.tipos.forEach(row);$("#add").onclick=()=>row();
+$("#f").onsubmit=async e=>{e.preventDefault();const tipos=[...document.querySelectorAll("#tp .box")].map(b=>({nombre:b.querySelector("[name=n]").value,meses:b.querySelector("[name=m]").value,checklist:b.querySelector("[name=c]").value.split("\n")}));try{await api("settings-set",{tipos});say("Ajustes guardados.",1)}catch(x){say(x.message)}}}
+async function start(){try{panel(await api("me"))}catch{loginView()}}
+start();
+</script></body></html>
